@@ -3,7 +3,9 @@ const CONFIG = {
     apiKey: 'AIzaSyAcRMhbIN9yAIdy6ZG62daAixaRddEHgSE',
     spreadsheetId: '1Gu69dicSuGUsLmbwWFH8BLVFr_s_KK2mv_qCSIl4WBY',
     habitsSheet: 'Habits',
-    logsSheet: 'Logs'
+    logsSheet: 'Logs',
+    // Google Apps Script endpoint for writing data
+    scriptUrl: 'https://script.google.com/macros/s/AKfycbwg8OXWySRZ8Qzb1JAfie1GG1DvDukpe_A7xgqhY_O_tDHUv_WxYDZIplqJK_8OwzU/exec'
 };
 
 // App State
@@ -322,27 +324,30 @@ const app = {
         }
     },
     
-    // Append log to Google Sheets
+    // Append log using Google Apps Script
     async appendLog(habitId, habitName, value) {
         const timestamp = this.getCurrentTimestamp();
         const date = this.getTodayDate();
         
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.spreadsheetId}/values/${CONFIG.logsSheet}!A:E:append?valueInputOption=USER_ENTERED&key=${CONFIG.apiKey}`;
-        
-        const response = await fetch(url, {
+        const response = await fetch(CONFIG.scriptUrl, {
             method: 'POST',
+            mode: 'no-cors', // Required for Apps Script
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                values: [[timestamp, date, habitId, habitName, value]]
+                timestamp: timestamp,
+                date: date,
+                habitId: habitId,
+                habitName: habitName,
+                value: value
             })
         });
         
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error('Failed to save log: ' + (error.error?.message || 'Unknown error'));
-        }
+        // Note: With no-cors mode, we can't read the response
+        // We'll assume success and reload data to verify
+        // Wait a moment for the script to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
     },
     
     // Refresh data
