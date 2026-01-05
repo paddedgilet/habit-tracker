@@ -20,6 +20,7 @@ const app = {
     todayLogs: [],
     allLogs: [],
     currentHabit: null,
+    tokenRefreshTimer: null,
     
     // Initialize app
     async init() {
@@ -35,6 +36,7 @@ const app = {
             // Check if user is already signed in
             if (this.isSignedIn()) {
                 console.log('User already signed in, loading data...');
+                this.scheduleTokenRefresh();
                 await this.loadData();
                 this.hideLoading();
             } else {
@@ -50,7 +52,7 @@ const app = {
     // Wait for Google APIs to load
     async waitForGoogleAPIs() {
         let attempts = 0;
-        const maxAttempts = 50; // 5 seconds max wait
+        const maxAttempts = 50;
         
         return new Promise((resolve, reject) => {
             const checkAPIs = setInterval(() => {
@@ -74,6 +76,17 @@ const app = {
     isSignedIn() {
         accessToken = localStorage.getItem('accessToken');
         const expiry = localStorage.getItem('tokenExpiry');
+        const lastAuth = localStorage.getItem('lastAuthTime');
+        
+        // Check if we authenticated within the last 7 days
+        if (lastAuth) {
+            const daysSinceAuth = (new Date().getTime() - parseInt(lastAuth)) / (1000 * 60 * 60 * 24);
+            if (daysSinceAuth > 7) {
+                console.log('Auth older than 7 days, need to re-authenticate');
+                this.clearAuth();
+                return false;
+            }
+        }
         
         if (accessToken && expiry) {
             const now = new Date().getTime();
@@ -81,13 +94,83 @@ const app = {
                 console.log('Valid token found');
                 return true;
             } else {
-                console.log('Token expired');
-                localStorage.removeItem('accessToken');
-                localStorage.removeItem('tokenExpiry');
+                console.log('Token expired, will request new one');
+                // Don't clear auth, just request new token
+                return 'refresh';
             }
         }
         
         return false;
+    },
+    
+    // Schedule automatic token refresh
+    scheduleTokenRefresh() {
+        // Clear any existing timer
+        if (this.tokenRefreshTimer) {
+            clearTimeout(this.tokenRefreshTimer);
+        }
+        
+        const expiry = localStorage.getItem('tokenExpiry');
+        if (expiry) {
+            const now = new Date().getTime();
+            const expiryTime = parseInt(expiry);
+            const timeUntilExpiry = expiryTime - now;
+            
+            // Refresh 5 minutes before expiry
+            const refreshTime = Math.max(0, timeUntilExpiry - (5 * 60 * 1000));
+            
+            console.log(`Token refresh scheduled in ${Math.round(refreshTime / 60000)} minutes`);
+            
+            this.tokenRefreshTimer = setTimeout(() => {
+                console.log('Auto-refreshing token...');
+                this.refreshToken();
+            }, refreshTime);
+        }
+    },
+    
+    // Refresh token silently
+    refreshToken() {
+        console.log('Requesting new token...');
+        
+        tokenClient.callback = async (resp) => {
+            if (resp.error !== undefined) {
+                console.error('Token refresh failed:', resp);
+                // If refresh fails, user needs to sign in again
+                this.clearAuth();
+                this.showSignIn();
+                return;
+            }
+            
+            accessToken = resp.access_token;
+            console.log('Token refreshed successfully');
+            
+            // Store new token and expiry
+            const expiry = new Date().getTime() + (3600 * 1000);
+            localStorage.setItem('accessToken', accessToken);
+            localStorage.setItem('tokenExpiry', expiry.toString());
+            
+            // Set the token for gapi
+            gapi.client.setToken({
+                access_token: accessToken
+            });
+            
+            // Schedule next refresh
+            this.scheduleTokenRefresh();
+        };
+        
+        // Request token without prompt (silent refresh)
+        tokenClient.requestAccessToken({ prompt: '' });
+    },
+    
+    // Clear authentication data
+    clearAuth() {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('tokenExpiry');
+        localStorage.removeItem('lastAuthTime');
+        accessToken = null;
+        if (this.tokenRefreshTimer) {
+            clearTimeout(this.tokenRefreshTimer);
+        }
     },
     
     // Show sign-in screen
@@ -123,15 +206,20 @@ const app = {
             accessToken = resp.access_token;
             console.log('Access token received');
             
-            // Store token and expiry time (expires in 1 hour)
+            // Store token, expiry, and last auth time
             const expiry = new Date().getTime() + (3600 * 1000);
+            const authTime = new Date().getTime();
             localStorage.setItem('accessToken', accessToken);
             localStorage.setItem('tokenExpiry', expiry.toString());
+            localStorage.setItem('lastAuthTime', authTime.toString());
             
             // Set the token for gapi
             gapi.client.setToken({
                 access_token: accessToken
             });
+            
+            // Schedule automatic token refresh
+            this.scheduleTokenRefresh();
             
             // Load data and show app
             try {
@@ -145,11 +233,7 @@ const app = {
         };
         
         // Request access token
-        if (gapi.client.getToken() === null) {
-            tokenClient.requestAccessToken({ prompt: 'consent' });
-        } else {
-            tokenClient.requestAccessToken({ prompt: '' });
-        }
+        tokenClient.requestAccessToken({ prompt: 'consent' });
     },
     
     // Sign out
@@ -160,16 +244,33 @@ const app = {
             gapi.client.setToken(null);
         }
         
-        accessToken = null;
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('tokenExpiry');
-        
+        this.clearAuth();
         location.reload();
     },
     
     // Load all data
     async loadData() {
         console.log('Loading data...');
+        
+        // Check if we need to refresh token
+        const signInStatus = this.isSignedIn();
+        if (signInStatus === 'refresh') {
+            console.log('Token expired, refreshing...');
+            await new Promise((resolve) => {
+                tokenClient.callback = async (resp) => {
+                    if (resp.error === undefined) {
+                        accessToken = resp.access_token;
+                        const expiry = new Date().getTime() + (3600 * 1000);
+                        localStorage.setItem('accessToken', accessToken);
+                        localStorage.setItem('tokenExpiry', expiry.toString());
+                        gapi.client.setToken({ access_token: accessToken });
+                        this.scheduleTokenRefresh();
+                    }
+                    resolve();
+                };
+                tokenClient.requestAccessToken({ prompt: '' });
+            });
+        }
         
         // Restore the main app HTML structure first
         const mainApp = document.getElementById('main-app');
@@ -240,7 +341,6 @@ const app = {
     async loadHabits() {
         console.log('Loading habits...');
         try {
-            // Make sure we have a valid token
             if (!gapi.client.getToken()) {
                 const storedToken = localStorage.getItem('accessToken');
                 if (storedToken) {
@@ -327,10 +427,29 @@ const app = {
         return new Date().toISOString();
     },
     
-    // Get today's value for a habit
+    // Get today's value for a habit (RUNNING SUM for numbers, LATEST for yes/no)
     getTodayValue(habitId) {
-        const log = this.todayLogs.find(log => log.habitId === habitId);
-        return log ? log.value : null;
+        const habit = this.habits.find(h => h.id === habitId);
+        const logs = this.todayLogs.filter(log => log.habitId === habitId);
+        
+        if (logs.length === 0) return null;
+        
+        if (habit && habit.type === 'number') {
+            // Return SUM of all logs today
+            const sum = logs.reduce((total, log) => {
+                const val = parseFloat(log.value);
+                return total + (isNaN(val) ? 0 : val);
+            }, 0);
+            return sum.toString();
+        } else {
+            // For yes/no, return the latest value
+            return logs[logs.length - 1].value;
+        }
+    },
+    
+    // Get all today's logs for a habit
+    getTodayLogs(habitId) {
+        return this.todayLogs.filter(log => log.habitId === habitId);
     },
     
     // Check if habit is completed today
@@ -366,18 +485,33 @@ const app = {
             const date = dates[i];
             const dayLogs = this.allLogs.filter(log => log.date === date);
             
-            const completed = dayLogs.filter(log => {
+            // Group logs by habit and calculate if each is completed
+            const habitCompletions = {};
+            dayLogs.forEach(log => {
                 const habit = this.habits.find(h => h.id === log.habitId);
-                if (!habit) return false;
+                if (!habit) return;
                 
-                if (habit.type === 'yes_no') {
-                    return log.value.toLowerCase() === 'yes';
-                } else {
-                    return parseFloat(log.value) >= habit.target;
+                if (!habitCompletions[log.habitId]) {
+                    habitCompletions[log.habitId] = { habit, values: [] };
                 }
-            }).length;
+                habitCompletions[log.habitId].values.push(log.value);
+            });
             
-            const completionRate = dayLogs.length > 0 ? completed / this.habits.length : 0;
+            // Count completed habits
+            let completed = 0;
+            Object.values(habitCompletions).forEach(({ habit, values }) => {
+                if (habit.type === 'yes_no') {
+                    // Latest value
+                    const latest = values[values.length - 1];
+                    if (latest.toLowerCase() === 'yes') completed++;
+                } else {
+                    // Sum of values
+                    const sum = values.reduce((total, val) => total + parseFloat(val), 0);
+                    if (sum >= habit.target) completed++;
+                }
+            });
+            
+            const completionRate = this.habits.length > 0 ? completed / this.habits.length : 0;
             
             if (completionRate > 0.5) {
                 streak++;
@@ -442,6 +576,7 @@ const app = {
         this.habits.forEach(habit => {
             const isCompleted = this.isHabitCompleted(habit);
             const value = this.getTodayValue(habit.id);
+            const logs = this.getTodayLogs(habit.id);
             
             const card = document.createElement('div');
             card.className = `habit-card ${isCompleted ? 'completed' : ''}`;
@@ -449,7 +584,12 @@ const app = {
             
             let valueDisplay = '';
             if (value !== null) {
-                valueDisplay = `<span class="habit-value has-value">${value}</span>`;
+                if (habit.type === 'number') {
+                    const numValue = parseFloat(value);
+                    valueDisplay = `<span class="habit-value has-value">${numValue} ${logs.length > 1 ? `(${logs.length} logs)` : ''}</span>`;
+                } else {
+                    valueDisplay = `<span class="habit-value has-value">${value}</span>`;
+                }
             } else {
                 valueDisplay = `<span class="habit-value">Not logged</span>`;
             }
@@ -484,7 +624,18 @@ const app = {
         title.textContent = habit.name;
         
         const todayValue = this.getTodayValue(habit.id);
-        currentValue.textContent = todayValue || 'Not logged';
+        const todayLogs = this.getTodayLogs(habit.id);
+        
+        // Display current total or status
+        if (todayValue !== null) {
+            if (habit.type === 'number') {
+                currentValue.textContent = `${todayValue} (${todayLogs.length} log${todayLogs.length !== 1 ? 's' : ''})`;
+            } else {
+                currentValue.textContent = todayValue;
+            }
+        } else {
+            currentValue.textContent = 'Not logged';
+        }
         
         if (habit.type === 'yes_no') {
             inputContainer.innerHTML = `
@@ -504,16 +655,17 @@ const app = {
                 });
             });
         } else {
-            const currentNum = parseFloat(todayValue) || '';
             inputContainer.innerHTML = `
                 <div class="input-group">
-                    <label>Enter Value</label>
+                    <label>Add to Today's Total</label>
                     <input type="number" class="input-number" id="habit-input-value" 
-                           value="${currentNum}" placeholder="0" min="0" step="1">
+                           value="" placeholder="0" min="0" step="1">
                 </div>
             `;
             
-            hint.textContent = `Target: ${habit.target}. Enter the current value.`;
+            const currentTotal = parseFloat(todayValue) || 0;
+            const remaining = Math.max(0, habit.target - currentTotal);
+            hint.textContent = `Target: ${habit.target}. Current: ${currentTotal}. Remaining: ${remaining}`;
         }
         
         modal.style.display = 'flex';
@@ -542,8 +694,8 @@ const app = {
             const input = document.getElementById('habit-input-value');
             value = input.value;
             
-            if (!value || value === '') {
-                alert('Please enter a value');
+            if (!value || value === '' || parseFloat(value) === 0) {
+                alert('Please enter a value greater than 0');
                 return;
             }
         }
@@ -672,14 +824,44 @@ const app = {
             const entriesDiv = document.createElement('div');
             entriesDiv.className = 'history-entries';
             
+            // Group by habit for this date
+            const habitGroups = {};
             groupedByDate[date].forEach(log => {
-                const entry = document.createElement('div');
-                entry.className = 'history-entry';
-                entry.innerHTML = `
-                    <span class="history-entry-name">${log.habitName}</span>
-                    <span class="history-entry-value">${log.value}</span>
-                `;
-                entriesDiv.appendChild(entry);
+                if (!habitGroups[log.habitId]) {
+                    habitGroups[log.habitId] = {
+                        habitName: log.habitName,
+                        logs: []
+                    };
+                }
+                habitGroups[log.habitId].logs.push(log);
+            });
+            
+            // Display each habit's logs
+            Object.values(habitGroups).forEach(({ habitName, logs }) => {
+                const habit = this.habits.find(h => h.name === habitName);
+                
+                if (habit && habit.type === 'number' && logs.length > 1) {
+                    // Show sum for number habits with multiple logs
+                    const sum = logs.reduce((total, log) => total + parseFloat(log.value), 0);
+                    const entry = document.createElement('div');
+                    entry.className = 'history-entry';
+                    entry.innerHTML = `
+                        <span class="history-entry-name">${habitName}</span>
+                        <span class="history-entry-value">${sum} (${logs.length} logs)</span>
+                    `;
+                    entriesDiv.appendChild(entry);
+                } else {
+                    // Show each log individually
+                    logs.forEach(log => {
+                        const entry = document.createElement('div');
+                        entry.className = 'history-entry';
+                        entry.innerHTML = `
+                            <span class="history-entry-name">${log.habitName}</span>
+                            <span class="history-entry-value">${log.value}</span>
+                        `;
+                        entriesDiv.appendChild(entry);
+                    });
+                }
             });
             
             dayDiv.appendChild(entriesDiv);
@@ -730,7 +912,7 @@ function gisLoaded() {
     tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CONFIG.clientId,
         scope: CONFIG.scopes,
-        callback: '', // defined later
+        callback: '',
     });
     console.log('GIS token client initialized');
     gisInited = true;
