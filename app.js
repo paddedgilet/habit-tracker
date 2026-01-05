@@ -95,7 +95,6 @@ const app = {
                 return true;
             } else {
                 console.log('Token expired, will request new one');
-                // Don't clear auth, just request new token
                 return 'refresh';
             }
         }
@@ -105,7 +104,6 @@ const app = {
     
     // Schedule automatic token refresh
     scheduleTokenRefresh() {
-        // Clear any existing timer
         if (this.tokenRefreshTimer) {
             clearTimeout(this.tokenRefreshTimer);
         }
@@ -116,7 +114,6 @@ const app = {
             const expiryTime = parseInt(expiry);
             const timeUntilExpiry = expiryTime - now;
             
-            // Refresh 5 minutes before expiry
             const refreshTime = Math.max(0, timeUntilExpiry - (5 * 60 * 1000));
             
             console.log(`Token refresh scheduled in ${Math.round(refreshTime / 60000)} minutes`);
@@ -135,7 +132,6 @@ const app = {
         tokenClient.callback = async (resp) => {
             if (resp.error !== undefined) {
                 console.error('Token refresh failed:', resp);
-                // If refresh fails, user needs to sign in again
                 this.clearAuth();
                 this.showSignIn();
                 return;
@@ -144,21 +140,17 @@ const app = {
             accessToken = resp.access_token;
             console.log('Token refreshed successfully');
             
-            // Store new token and expiry
             const expiry = new Date().getTime() + (3600 * 1000);
             localStorage.setItem('accessToken', accessToken);
             localStorage.setItem('tokenExpiry', expiry.toString());
             
-            // Set the token for gapi
             gapi.client.setToken({
                 access_token: accessToken
             });
             
-            // Schedule next refresh
             this.scheduleTokenRefresh();
         };
         
-        // Request token without prompt (silent refresh)
         tokenClient.requestAccessToken({ prompt: '' });
     },
     
@@ -206,22 +198,18 @@ const app = {
             accessToken = resp.access_token;
             console.log('Access token received');
             
-            // Store token, expiry, and last auth time
             const expiry = new Date().getTime() + (3600 * 1000);
             const authTime = new Date().getTime();
             localStorage.setItem('accessToken', accessToken);
             localStorage.setItem('tokenExpiry', expiry.toString());
             localStorage.setItem('lastAuthTime', authTime.toString());
             
-            // Set the token for gapi
             gapi.client.setToken({
                 access_token: accessToken
             });
             
-            // Schedule automatic token refresh
             this.scheduleTokenRefresh();
             
-            // Load data and show app
             try {
                 this.showLoading();
                 await this.loadData();
@@ -232,7 +220,6 @@ const app = {
             }
         };
         
-        // Request access token
         tokenClient.requestAccessToken({ prompt: 'consent' });
     },
     
@@ -252,7 +239,6 @@ const app = {
     async loadData() {
         console.log('Loading data...');
         
-        // Check if we need to refresh token
         const signInStatus = this.isSignedIn();
         if (signInStatus === 'refresh') {
             console.log('Token expired, refreshing...');
@@ -272,7 +258,6 @@ const app = {
             });
         }
         
-        // Restore the main app HTML structure first
         const mainApp = document.getElementById('main-app');
         mainApp.innerHTML = `
             <header class="app-header">
@@ -404,7 +389,6 @@ const app = {
                 value: row[4]
             }));
             
-            // Filter today's logs
             const today = this.getTodayDate();
             this.todayLogs = this.allLogs.filter(log => log.date === today);
             
@@ -427,7 +411,8 @@ const app = {
         return new Date().toISOString();
     },
     
-    // Get today's value for a habit (RUNNING SUM for numbers, LATEST for yes/no)
+    // Get today's total value for a habit (RUNNING SUM for numbers, LATEST for yes/no)
+    // Returns NUMBER for number habits, STRING for yes/no habits
     getTodayValue(habitId) {
         const habit = this.habits.find(h => h.id === habitId);
         const logs = this.todayLogs.filter(log => log.habitId === habitId);
@@ -435,14 +420,15 @@ const app = {
         if (logs.length === 0) return null;
         
         if (habit && habit.type === 'number') {
-            // Return SUM of all logs today
+            // Return SUM of all logs today as a NUMBER
             const sum = logs.reduce((total, log) => {
                 const val = parseFloat(log.value);
                 return total + (isNaN(val) ? 0 : val);
             }, 0);
-            return sum.toString();
+            console.log(`Habit ${habitId} (${habit.name}): Sum = ${sum} from ${logs.length} logs`);
+            return sum; // Return as number, not string
         } else {
-            // For yes/no, return the latest value
+            // For yes/no, return the latest value as string
             return logs[logs.length - 1].value;
         }
     },
@@ -456,13 +442,20 @@ const app = {
     isHabitCompleted(habit) {
         const value = this.getTodayValue(habit.id);
         
-        if (value === null) return false;
+        if (value === null) {
+            console.log(`Habit ${habit.id} (${habit.name}): Not logged`);
+            return false;
+        }
         
         if (habit.type === 'yes_no') {
-            return value.toLowerCase() === 'yes' || value === '1' || value === 'true';
+            const completed = value.toLowerCase() === 'yes' || value === '1' || value === 'true';
+            console.log(`Habit ${habit.id} (${habit.name}): Yes/No = ${value}, Completed = ${completed}`);
+            return completed;
         } else {
-            const numValue = parseFloat(value);
-            return !isNaN(numValue) && numValue >= habit.target;
+            // value is already a number from getTodayValue
+            const completed = value >= habit.target;
+            console.log(`Habit ${habit.id} (${habit.name}): Sum = ${value}, Target = ${habit.target}, Completed = ${completed}`);
+            return completed;
         }
     },
     
@@ -485,7 +478,6 @@ const app = {
             const date = dates[i];
             const dayLogs = this.allLogs.filter(log => log.date === date);
             
-            // Group logs by habit and calculate if each is completed
             const habitCompletions = {};
             dayLogs.forEach(log => {
                 const habit = this.habits.find(h => h.id === log.habitId);
@@ -497,15 +489,12 @@ const app = {
                 habitCompletions[log.habitId].values.push(log.value);
             });
             
-            // Count completed habits
             let completed = 0;
             Object.values(habitCompletions).forEach(({ habit, values }) => {
                 if (habit.type === 'yes_no') {
-                    // Latest value
                     const latest = values[values.length - 1];
                     if (latest.toLowerCase() === 'yes') completed++;
                 } else {
-                    // Sum of values
                     const sum = values.reduce((total, val) => total + parseFloat(val), 0);
                     if (sum >= habit.target) completed++;
                 }
@@ -585,8 +574,8 @@ const app = {
             let valueDisplay = '';
             if (value !== null) {
                 if (habit.type === 'number') {
-                    const numValue = parseFloat(value);
-                    valueDisplay = `<span class="habit-value has-value">${numValue} ${logs.length > 1 ? `(${logs.length} logs)` : ''}</span>`;
+                    // value is already a number
+                    valueDisplay = `<span class="habit-value has-value">${value} ${logs.length > 1 ? `(${logs.length} logs)` : ''}</span>`;
                 } else {
                     valueDisplay = `<span class="habit-value has-value">${value}</span>`;
                 }
@@ -626,7 +615,6 @@ const app = {
         const todayValue = this.getTodayValue(habit.id);
         const todayLogs = this.getTodayLogs(habit.id);
         
-        // Display current total or status
         if (todayValue !== null) {
             if (habit.type === 'number') {
                 currentValue.textContent = `${todayValue} (${todayLogs.length} log${todayLogs.length !== 1 ? 's' : ''})`;
@@ -663,7 +651,7 @@ const app = {
                 </div>
             `;
             
-            const currentTotal = parseFloat(todayValue) || 0;
+            const currentTotal = todayValue !== null ? todayValue : 0;
             const remaining = Math.max(0, habit.target - currentTotal);
             hint.textContent = `Target: ${habit.target}. Current: ${currentTotal}. Remaining: ${remaining}`;
         }
@@ -824,7 +812,6 @@ const app = {
             const entriesDiv = document.createElement('div');
             entriesDiv.className = 'history-entries';
             
-            // Group by habit for this date
             const habitGroups = {};
             groupedByDate[date].forEach(log => {
                 if (!habitGroups[log.habitId]) {
@@ -836,12 +823,10 @@ const app = {
                 habitGroups[log.habitId].logs.push(log);
             });
             
-            // Display each habit's logs
             Object.values(habitGroups).forEach(({ habitName, logs }) => {
                 const habit = this.habits.find(h => h.name === habitName);
                 
                 if (habit && habit.type === 'number' && logs.length > 1) {
-                    // Show sum for number habits with multiple logs
                     const sum = logs.reduce((total, log) => total + parseFloat(log.value), 0);
                     const entry = document.createElement('div');
                     entry.className = 'history-entry';
@@ -851,7 +836,6 @@ const app = {
                     `;
                     entriesDiv.appendChild(entry);
                 } else {
-                    // Show each log individually
                     logs.forEach(log => {
                         const entry = document.createElement('div');
                         entry.className = 'history-entry';
