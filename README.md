@@ -57,23 +57,6 @@ A Progressive Web App for tracking daily fitness and wellness habits with Google
    - Your app will be at: `https://YOUR-USERNAME.github.io/habit-tracker/`
    - GitHub will show you the URL in the Pages settings
 
-### Option 2: Netlify (Alternative - Also FREE)
-
-**Steps:**
-
-1. Go to https://netlify.com and sign up
-2. Click "Add new site" → "Deploy manually"
-3. Drag and drop the entire `habit-tracker` folder
-4. Netlify will give you a URL like: `https://random-name.netlify.app`
-
-### Option 3: Vercel (Alternative - Also FREE)
-
-**Steps:**
-
-1. Go to https://vercel.com and sign up
-2. Click "Add New" → "Project"
-3. Click "Continue with GitHub" or upload files manually
-4. Vercel will deploy and give you a URL
 
 ## 📱 Installing on Your Phone
 
