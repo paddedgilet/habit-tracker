@@ -1,0 +1,22 @@
+{
+  "name": "Habit Tracker",
+  "short_name": "Habits",
+  "description": "Track your daily fitness and wellness habits",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230a0a0a'/><text x='96' y='145' font-size='120' text-anchor='middle' fill='%2300ff88' font-family='monospace'>✓</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%230a0a0a'/><text x='256' y='390' font-size='320' text-anchor='middle' fill='%2300ff88' font-family='monospace'>✓</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
