@@ -351,7 +351,7 @@ const app = {
                 source: row[4] || 'manual'
             }));
             
-            console.log('Habits loaded:', this.habits.length, this.habits);
+            console.log('Habits loaded:', this.habits.length);
         } catch (error) {
             console.error('Error loading habits:', error);
             throw new Error('Failed to load habits: ' + (error.result?.error?.message || error.message));
@@ -388,7 +388,6 @@ const app = {
             this.todayLogs = this.allLogs.filter(log => log.date === today);
             
             console.log('Logs loaded. Total:', this.allLogs.length, 'Today:', this.todayLogs.length);
-            console.log('Today\'s logs:', this.todayLogs);
         } catch (error) {
             console.error('Error loading logs:', error);
             this.allLogs = [];
@@ -407,76 +406,26 @@ const app = {
         return new Date().toISOString();
     },
     
-    // Calculate today's sum/value for a habit
-    calculateHabitDailyValue(habitId) {
-        const habit = this.habits.find(h => h.id === habitId);
-        if (!habit) {
-            console.error(`Habit ${habitId} not found`);
-            return null;
-        }
-        
-        const logs = this.todayLogs.filter(log => log.habitId === habitId);
-        
-        if (logs.length === 0) {
-            console.log(`No logs for habit ${habitId} (${habit.name})`);
-            return null;
-        }
-        
-        console.log(`Calculating value for habit ${habitId} (${habit.name}, type: ${habit.type})`);
-        console.log(`Found ${logs.length} logs:`, logs.map(l => l.value));
-        
-        if (habit.type === 'number') {
-            // Calculate sum
-            const sum = logs.reduce((total, log) => {
-                const val = parseFloat(log.value);
-                console.log(`  Adding ${log.value} (parsed as ${val})`);
-                return total + (isNaN(val) ? 0 : val);
-            }, 0);
-            console.log(`  Final sum: ${sum}`);
-            return { type: 'number', value: sum, logCount: logs.length };
-        } else {
-            // Get latest value
-            const latestValue = logs[logs.length - 1].value;
-            console.log(`  Latest value: ${latestValue}`);
-            return { type: 'yes_no', value: latestValue, logCount: logs.length };
-        }
+    // Check if habit was logged today (any log = completed)
+    isHabitLoggedToday(habitId) {
+        return this.todayLogs.some(log => log.habitId === habitId);
     },
     
-    // Get all today's logs for a habit
-    getTodayLogs(habitId) {
-        return this.todayLogs.filter(log => log.habitId === habitId);
-    },
-    
-    // Check if habit is completed today
-    isHabitCompleted(habit) {
-        const result = this.calculateHabitDailyValue(habit.id);
-        
-        if (!result) {
-            return false;
-        }
-        
-        if (result.type === 'yes_no') {
-            const val = result.value.toLowerCase();
-            const completed = val === 'yes' || val === '1' || val === 'true';
-            console.log(`Habit ${habit.id} (${habit.name}): Yes/No = ${result.value}, Completed = ${completed}`);
-            return completed;
-        } else {
-            const completed = result.value >= habit.target;
-            console.log(`Habit ${habit.id} (${habit.name}): Sum = ${result.value}, Target = ${habit.target}, Completed = ${completed}`);
-            return completed;
-        }
+    // Get number of logs for a habit today
+    getLogCount(habitId) {
+        return this.todayLogs.filter(log => log.habitId === habitId).length;
     },
     
     // Calculate completion stats
     getCompletionStats() {
-        const completed = this.habits.filter(h => this.isHabitCompleted(h)).length;
+        const completed = this.habits.filter(h => this.isHabitLoggedToday(h.id)).length;
         const total = this.habits.length;
         const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
         
         return { completed, total, percentage };
     },
     
-    // Calculate streak
+    // Calculate streak (any habit logged that day counts toward streak)
     calculateStreak() {
         const dates = [...new Set(this.allLogs.map(log => log.date))].sort().reverse();
         
@@ -486,29 +435,9 @@ const app = {
             const date = dates[i];
             const dayLogs = this.allLogs.filter(log => log.date === date);
             
-            const habitCompletions = {};
-            dayLogs.forEach(log => {
-                const habit = this.habits.find(h => h.id === log.habitId);
-                if (!habit) return;
-                
-                if (!habitCompletions[log.habitId]) {
-                    habitCompletions[log.habitId] = { habit, values: [] };
-                }
-                habitCompletions[log.habitId].values.push(log.value);
-            });
-            
-            let completed = 0;
-            Object.values(habitCompletions).forEach(({ habit, values }) => {
-                if (habit.type === 'yes_no') {
-                    const latest = values[values.length - 1];
-                    if (latest.toLowerCase() === 'yes') completed++;
-                } else {
-                    const sum = values.reduce((total, val) => total + parseFloat(val), 0);
-                    if (sum >= habit.target) completed++;
-                }
-            });
-            
-            const completionRate = this.habits.length > 0 ? completed / this.habits.length : 0;
+            // Count unique habits logged this day
+            const uniqueHabits = [...new Set(dayLogs.map(log => log.habitId))];
+            const completionRate = this.habits.length > 0 ? uniqueHabits.length / this.habits.length : 0;
             
             if (completionRate > 0.5) {
                 streak++;
@@ -522,11 +451,10 @@ const app = {
     
     // Render the UI
     render() {
-        console.log('=== RENDERING UI ===');
+        console.log('Rendering UI...');
         this.renderHeader();
         this.renderProgress();
         this.renderHabits();
-        console.log('=== RENDER COMPLETE ===');
     },
     
     // Render header with sign-out button
@@ -564,55 +492,39 @@ const app = {
         }
     },
     
-    // Render habits list
+    // Render habits list - SIMPLIFIED: just show name, checkmark, and log count
     renderHabits() {
         const container = document.getElementById('habits-container');
         if (!container) return;
         
         container.innerHTML = '';
         
-        console.log('Rendering habits...');
-        
         this.habits.forEach(habit => {
-            console.log(`\n--- Rendering habit: ${habit.name} (ID: ${habit.id}, Type: ${habit.type}) ---`);
-            
-            const isCompleted = this.isHabitCompleted(habit);
-            const dailyValue = this.calculateHabitDailyValue(habit.id);
-            
-            console.log(`Completed: ${isCompleted}`);
-            console.log(`Daily value:`, dailyValue);
+            const isLogged = this.isHabitLoggedToday(habit.id);
+            const logCount = this.getLogCount(habit.id);
             
             const card = document.createElement('div');
-            card.className = `habit-card ${isCompleted ? 'completed' : ''}`;
+            card.className = `habit-card ${isLogged ? 'completed' : ''}`;
             card.onclick = () => this.openHabitModal(habit);
             
-            let valueDisplay = '';
-            if (dailyValue) {
-                if (dailyValue.type === 'number') {
-                    const logInfo = dailyValue.logCount > 1 ? ` (${dailyValue.logCount} logs)` : '';
-                    valueDisplay = `<span class="habit-value has-value">${dailyValue.value}${logInfo}</span>`;
-                    console.log(`Display: ${dailyValue.value}${logInfo}`);
+            // Simple display: just show if logged or not
+            let statusDisplay = '';
+            if (isLogged) {
+                if (logCount > 1) {
+                    statusDisplay = `<span class="habit-value has-value">Logged (${logCount}×)</span>`;
                 } else {
-                    valueDisplay = `<span class="habit-value has-value">${dailyValue.value}</span>`;
-                    console.log(`Display: ${dailyValue.value}`);
+                    statusDisplay = `<span class="habit-value has-value">Logged</span>`;
                 }
             } else {
-                valueDisplay = `<span class="habit-value">Not logged</span>`;
-                console.log(`Display: Not logged`);
-            }
-            
-            let targetDisplay = '';
-            if (habit.type === 'number') {
-                targetDisplay = `<div class="habit-target">Target: ${habit.target}</div>`;
+                statusDisplay = `<span class="habit-value">Not logged</span>`;
             }
             
             card.innerHTML = `
                 <div class="habit-header">
                     <div class="habit-name">${habit.name}</div>
-                    <div class="habit-status">${isCompleted ? '✓' : '○'}</div>
+                    <div class="habit-status">${isLogged ? '✓' : '○'}</div>
                 </div>
-                ${valueDisplay}
-                ${targetDisplay}
+                ${statusDisplay}
             `;
             
             container.appendChild(card);
@@ -630,28 +542,23 @@ const app = {
         
         title.textContent = habit.name;
         
-        const dailyValue = this.calculateHabitDailyValue(habit.id);
+        const logCount = this.getLogCount(habit.id);
         
-        if (dailyValue) {
-            if (dailyValue.type === 'number') {
-                currentValue.textContent = `${dailyValue.value} (${dailyValue.logCount} log${dailyValue.logCount !== 1 ? 's' : ''})`;
-            } else {
-                currentValue.textContent = dailyValue.value;
-            }
+        if (logCount > 0) {
+            currentValue.textContent = `Logged ${logCount} time${logCount > 1 ? 's' : ''} today`;
         } else {
-            currentValue.textContent = 'Not logged';
+            currentValue.textContent = 'Not logged today';
         }
         
         if (habit.type === 'yes_no') {
-            const currentVal = dailyValue ? dailyValue.value : null;
             inputContainer.innerHTML = `
                 <div class="toggle-buttons">
-                    <button class="toggle-btn ${currentVal === 'Yes' ? 'active' : ''}" data-value="Yes">Yes</button>
-                    <button class="toggle-btn ${currentVal === 'No' ? 'active' : ''}" data-value="No">No</button>
+                    <button class="toggle-btn" data-value="Yes">Yes</button>
+                    <button class="toggle-btn" data-value="No">No</button>
                 </div>
             `;
             
-            hint.textContent = 'Did you complete this habit today?';
+            hint.textContent = 'Did you complete this habit?';
             
             const buttons = inputContainer.querySelectorAll('.toggle-btn');
             buttons.forEach(btn => {
@@ -663,15 +570,13 @@ const app = {
         } else {
             inputContainer.innerHTML = `
                 <div class="input-group">
-                    <label>Add to Today's Total</label>
+                    <label>Log Value</label>
                     <input type="number" class="input-number" id="habit-input-value" 
                            value="" placeholder="0" min="0" step="1">
                 </div>
             `;
             
-            const currentTotal = dailyValue ? dailyValue.value : 0;
-            const remaining = Math.max(0, habit.target - currentTotal);
-            hint.textContent = `Target: ${habit.target}. Current: ${currentTotal}. Remaining: ${remaining}`;
+            hint.textContent = `Enter value to log (e.g., number of ${habit.name.toLowerCase()})`;
         }
         
         modal.style.display = 'flex';
@@ -738,7 +643,7 @@ const app = {
             console.log('Log saved:', response);
         } catch (error) {
             console.error('Error appending log:', error);
-            throw new Error('Failed to save log: ' + (error.result?.error||message || error.message));
+            throw new Error('Failed to save log: ' + (error.result?.error?.message || error.message));
         }
     },
     
@@ -830,40 +735,15 @@ const app = {
             const entriesDiv = document.createElement('div');
             entriesDiv.className = 'history-entries';
             
-            const habitGroups = {};
+            // Show all logs individually
             groupedByDate[date].forEach(log => {
-                if (!habitGroups[log.habitId]) {
-                    habitGroups[log.habitId] = {
-                        habitName: log.habitName,
-                        logs: []
-                    };
-                }
-                habitGroups[log.habitId].logs.push(log);
-            });
-            
-            Object.values(habitGroups).forEach(({ habitName, logs }) => {
-                const habit = this.habits.find(h => h.name === habitName);
-                
-                if (habit && habit.type === 'number' && logs.length > 1) {
-                    const sum = logs.reduce((total, log) => total + parseFloat(log.value), 0);
-                    const entry = document.createElement('div');
-                    entry.className = 'history-entry';
-                    entry.innerHTML = `
-                        <span class="history-entry-name">${habitName}</span>
-                        <span class="history-entry-value">${sum} (${logs.length} logs)</span>
-                    `;
-                    entriesDiv.appendChild(entry);
-                } else {
-                    logs.forEach(log => {
-                        const entry = document.createElement('div');
-                        entry.className = 'history-entry';
-                        entry.innerHTML = `
-                            <span class="history-entry-name">${log.habitName}</span>
-                            <span class="history-entry-value">${log.value}</span>
-                        `;
-                        entriesDiv.appendChild(entry);
-                    });
-                }
+                const entry = document.createElement('div');
+                entry.className = 'history-entry';
+                entry.innerHTML = `
+                    <span class="history-entry-name">${log.habitName}</span>
+                    <span class="history-entry-value">${log.value}</span>
+                `;
+                entriesDiv.appendChild(entry);
             });
             
             dayDiv.appendChild(entriesDiv);
